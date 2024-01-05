@@ -1,0 +1,29 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="pkg/pb/message_rpc";
+
+import "rpc/common.proto";
+
+message RpcLogicUnit{}
+
+message RpcLogicSigninRequest {
+    ClientId clientId = 1;
+}
+
+message RpcLogicSigninResponse {
+    uint64 guildId = 1;
+}
+
+message RpcLogicSubscribeOrUnsubscribAsk {
+    uint32 gatewayId = 1;
+    // key-bool true-sub false-unsub
+    map<uint64, bool> guild = 2;
+}
+
+message RpcLogicReSubscribeAsk {
+    uint32 gatewayId = 1;
+    // key-sub
+    map<uint64, bool> guild = 2;
+}

@@ -2,3 +2,23 @@
 // rpccli option
 
 package api
+
+import (
+	"time"
+	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
+	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
+)
+
+type (
+	rpcAuthCli struct {
+		cli *jsn_rpc.Client
+	}
+	EmptyRpcAuthCli struct{}
+)
+
+func (c *rpcAuthCli) RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return c.cli.Ask(in, cancel, timeout)
+}
+func (c *EmptyRpcAuthCli) RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return EmptyRpcCliError
+}

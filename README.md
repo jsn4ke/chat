@@ -16,4 +16,11 @@
 
 ### message-flow
 - [ ] 仅允许一端登录
-  * |gateway-|auth-|gateway-|logic-lock-kickother-|gateway lock采用乐观锁
+  * |gateway-|auth-|gateway-|logic-lock-kickother-|gateway lock采用乐观锁   
+
+### todolist
+- [ ] 
+- [ ] 登录
+    -[ ] gateway
+    -[ ] logic 
+    -[ ] auth
