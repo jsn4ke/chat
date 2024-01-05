@@ -14,6 +14,7 @@ func main() {
 		rpccli   = flags.String("rpccli", "", "")
 		rpcinter = flags.String("rpcinter", "", "")
 		cli      = flags.Bool("cli", false, "")
+		rpcsvr   = flags.String("rpcsvr", "", "")
 	)
 	protogen.Options{
 		ParamFunc: flags.Set,
@@ -34,6 +35,9 @@ func main() {
 			}
 			if *cli {
 				protoc_gen_chat.GenCli(p, v)
+			}
+			if 0 != len(*rpcsvr) {
+				protoc_gen_chat.GenRpcSrv(p, v, *rpcsvr)
 			}
 
 		}
