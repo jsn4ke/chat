@@ -1,0 +1,10 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="pkg/pb/message_rpc";
+
+enum RpcCmd {
+    RpcCmd_None = 0;
+    RpcCmd_RpcAuthCheckAsk = 10001;
+}
