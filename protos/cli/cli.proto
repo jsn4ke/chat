@@ -1,0 +1,26 @@
+syntax="proto3";
+
+package message_cli;
+
+option go_package="pkg/pb/message_cli";
+
+enum CliCmd {
+    CliCmd_None = 0;
+    CliCmd_ResponseCliSucces = 1;
+    CliCmd_ResponseCliFailure = 2;
+    CliCmd_RequestSignIn = 3;
+}
+
+message ResponseCliSucces {
+    uint32 inCmdId = 1;
+}
+
+message ResponseCliFailure {
+    uint32 inCmdId = 1;
+    string errorString = 2;
+}
+
+message RequestSignIn {
+    uint64 uid = 1;
+    bytes token = 2;
+}

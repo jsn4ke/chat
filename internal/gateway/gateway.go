@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"net"
 	"sync"
 	"time"
 
 	"github.com/jsn4ke/chat/pkg/inter"
+	ltvcodec "github.com/jsn4ke/chat/pkg/ltv-codec"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	"github.com/jsn4ke/jsn_net"
 )
@@ -15,13 +17,33 @@ const (
 	channelTypeMax
 )
 
-func NewGateway(gatewayid uint32, done <-chan struct{}) {
+func NewGateway(gatewayid uint32, addr string, done <-chan struct{},
+	authCluster inter.RpcAuthCliCluster,
+	logicCluster inter.RpcLogicCliCluster,
+) error {
+	listener, err := net.Listen(`tcp`, addr)
+	if nil != err {
+		return err
+	}
+
 	g := new(gateway)
 	g.gatewayId = gatewayid
-
 	g.done = done
+	g.authCluster = authCluster
+	g.logicCluster = logicCluster
+	g.syncDiff = true
+
+	g.cliAcceptor = jsn_net.NewTcpAcceptor(listener.(*net.TCPListener), 1, 30000, func() jsn_net.Pipe {
+		c := new(clientHandler)
+		c.in = make(chan any, 1)
+		c.done = make(chan struct{})
+		c.gateway = g
+		return c
+	}, new(ltvcodec.LTVCodec), 0, 64)
+	g.cliAcceptor.Start()
 
 	jsn_net.WaitGo(&g.wg, g.upload)
+	return nil
 }
 
 type gateway struct {
@@ -32,10 +54,13 @@ type gateway struct {
 
 	cliAcceptor *jsn_net.TcpAcceptor
 
+	////////////////
 	mtx         sync.Mutex
-	channels    [channelTypeMax]map[uint64]map[uint64]struct{}
+	users       map[uint64]uint64
+	channels    [channelTypeMax]map[uint64]map[uint64]uint64
 	channelSync [channelTypeMax]map[uint64]bool
 	syncDiff    bool
+	///////////////
 
 	done <-chan struct{}
 
@@ -58,53 +83,77 @@ func (g *gateway) SubscribHeatbeat() time.Duration {
 	return time.Millisecond * 100
 }
 
-func (g *gateway) Subscrib(ct int, key uint64, uid uint64) {
+func (g *gateway) bindUser(uid uint64, ssid uint64, guildId uint64) {
 	g.mtx.Lock()
-	defer g.mtx.Unlock()
-	keyMap := g.channels[ct]
-	if nil == keyMap {
-		keyMap = map[uint64]map[uint64]struct{}{}
-		g.channels[ct] = keyMap
+	g.mtx.Unlock()
+	oldSess := g.users[uid]
+	if nil == g.users {
+		g.users = map[uint64]uint64{}
 	}
-	mp, ok := keyMap[key]
-	if !ok {
-		mp = map[uint64]struct{}{}
-		keyMap[key] = mp
+	g.users[uid] = ssid
+	if 0 != oldSess {
+		sess := g.cliAcceptor.Session(oldSess)
+		if nil != sess {
+			sess.Close()
+		}
 	}
-	mp[uid] = struct{}{}
-	// 0-1 new sub
-	if 1 != len(mp) {
-		return
-	}
-	sm := g.channelSync[ct]
-	if nil == sm {
-		sm = map[uint64]bool{}
-		g.channelSync[ct] = sm
-	}
-	if _, ok := sm[key]; ok {
-		delete(sm, key)
-	} else {
-		sm[key] = true
+	if 0 != guildId {
+		ct := channelTypeGuild
+		keyMap := g.channels[ct]
+		mp, ok := keyMap[guildId]
+		if !ok {
+			if nil == keyMap {
+				keyMap = map[uint64]map[uint64]uint64{}
+				g.channels[ct] = keyMap
+			}
+			mp = map[uint64]uint64{}
+			keyMap[guildId] = mp
+		}
+		_, replace := mp[uid]
+		mp[uid] = ssid
+		// 0-1 new sub or 1-1
+		if !replace && 1 != len(mp) {
+			return
+		}
+		sm := g.channelSync[ct]
+		if _, ok := sm[guildId]; ok {
+			delete(sm, guildId)
+		} else {
+			if nil == sm {
+				sm = map[uint64]bool{}
+				g.channelSync[ct] = sm
+			}
+			sm[guildId] = true
+		}
 	}
 }
 
-func (g *gateway) Unsubscrib(ct int, key uint64, uid uint64) {
+func (g *gateway) unbindUser(uid uint64, ssid uint64, guild uint64) {
 	g.mtx.Lock()
-	defer g.mtx.Unlock()
-	delete(g.channels[ct][key], uid)
-
-	if 0 != len(g.channels[ct][key]) {
-		return
+	g.mtx.Unlock()
+	curssid := g.users[uid]
+	if curssid == ssid {
+		delete(g.users, uid)
 	}
-	sm := g.channelSync[ct]
-	if nil == sm {
-		sm = map[uint64]bool{}
-		g.channelSync[ct] = sm
-	}
-	if _, ok := sm[key]; ok {
-		delete(sm, key)
-	} else {
-		sm[key] = false
+	if 0 != guild {
+		ch := g.channels[channelTypeGuild]
+		guildSub := ch[guild]
+		curssid = guildSub[uid]
+		if curssid == ssid {
+			delete(guildSub, uid)
+			if 0 == len(guildSub) {
+				cs := g.channelSync[channelTypeGuild]
+				if _, ok := cs[guild]; ok {
+					delete(cs, guild)
+				} else {
+					if nil == cs {
+						cs = map[uint64]bool{}
+						g.channelSync[channelTypeGuild] = cs
+					}
+					cs[guild] = false
+				}
+			}
+		}
 	}
 }
 

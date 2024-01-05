@@ -13,6 +13,7 @@ func main() {
 		rpcext   = flags.Bool("rpcext", false, "")
 		rpccli   = flags.String("rpccli", "", "")
 		rpcinter = flags.String("rpcinter", "", "")
+		cli      = flags.Bool("cli", false, "")
 	)
 	protogen.Options{
 		ParamFunc: flags.Set,
@@ -31,6 +32,10 @@ func main() {
 			if 0 != len(*rpcinter) {
 				protoc_gen_chat.GenRpcInter(p, v, *rpcinter)
 			}
+			if *cli {
+				protoc_gen_chat.GenCli(p, v)
+			}
+
 		}
 		return nil
 	})

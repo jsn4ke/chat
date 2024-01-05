@@ -2,40 +2,48 @@ package gateway
 
 import (
 	"fmt"
-	"sync/atomic"
+	"time"
 
+	ltvcodec "github.com/jsn4ke/chat/pkg/ltv-codec"
+	"github.com/jsn4ke/chat/pkg/pb/message_cli"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	"github.com/jsn4ke/jsn_net"
 )
 
 var (
 	_ jsn_net.Pipe = (*clientHandler)(nil)
+
+	handlers = map[uint32]func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) error{}
 )
 
-type clientHandler struct {
-	in   chan any
-	done chan struct{}
+func init() {
+	handlers[uint32(message_cli.CliCmd_CliCmd_RequestSignIn)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) error {
+		return auth(c, session, in.(*message_cli.RequestSignIn))
+	}
+}
 
-	closed int32
+type clientHandler struct {
+	in       chan any
+	inflight []any
+	done     chan struct{}
+
+	session *jsn_net.TcpSession
+
+	gateway *gateway
 
 	authed bool
+
+	uid     uint64
+	guildId uint64
 }
 
 // Close implements jsn_net.Pipe.
 func (c *clientHandler) Close() {
-	atomic.StoreInt32(&c.closed, 1)
-
-	select {
-	case c.done <- struct{}{}:
-	default:
-	}
+	close(c.done)
 }
 
 // Post implements jsn_net.Pipe.
 func (c *clientHandler) Post(in any) bool {
-	if 1 == atomic.LoadInt32(&c.closed) {
-		return false
-	}
 	c.in <- in
 	return true
 }
@@ -62,12 +70,67 @@ func (c *clientHandler) Run() {
 }
 
 func (c *clientHandler) handlerIn(in any) {
+	switch tp := in.(type) {
+	case *jsn_net.TcpEventAdd:
+		c.session = tp.S
+		c.session.SetReadTimeoutOnce(time.Second)
+	case *jsn_net.TcpEventClose:
+		if 0 == c.uid {
+			return
+		}
+		c.gateway.unbindUser(c.uid, c.session.Sid(), c.guildId)
+	case *jsn_net.TcpEventPacket:
+		var (
+			body  []byte
+			err   error
+			cmdId uint32
+		)
+		packet := tp.Packet.(*ltvcodec.LTVReadPacket)
+		h, ok := handlers[packet.CmdId]
+		if !ok {
+			err = fmt.Errorf("%v in coming no handler", packet.CmdId)
+		} else {
+			err = h(c, tp.S, packet.Body)
+		}
+		if nil != err {
+			resp := &message_cli.ResponseCliFailure{
+				InCmdId:     packet.CmdId,
+				ErrorString: err.Error(),
+			}
+			body, err = resp.Marshal()
+			if nil != err {
+				fmt.Println("handlerIn marshal error")
+			}
+			cmdId = resp.CmdId()
+
+		} else {
+			resp := &message_cli.ResponseCliSucces{
+				InCmdId: packet.CmdId,
+			}
+			body, err = resp.Marshal()
+			if nil != err {
+				fmt.Println("handlerIn marshal error")
+			}
+			cmdId = resp.CmdId()
+		}
+		tp.S.Send(&ltvcodec.LTVWritePacket{
+			CmdId: cmdId,
+			Body:  body,
+		})
+		for _, v := range c.inflight {
+			v := v
+			c.session.Send(v)
+		}
+	case *jsn_net.TcpEventOutSide:
+	}
 }
 
-func auth(c *clientHandler, session *jsn_net.TcpSession, gateway *gateway) error {
+func auth(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestSignIn) error {
 	var (
-		uid   uint64
-		token []byte
+		uid     uint64 = in.GetUid()
+		token   []byte = in.GetToken()
+		gateway        = c.gateway
+		ssid           = session.Sid()
 	)
 	if c.authed {
 		return fmt.Errorf("session authed")
@@ -81,15 +144,15 @@ func auth(c *clientHandler, session *jsn_net.TcpSession, gateway *gateway) error
 	}
 	reply, err := gateway.logicCluster.Get().RpcLogicSigninRequest(&message_rpc.RpcLogicSigninRequest{
 		ClientId: &message_rpc.ClientId{
-			Ssid:      session.Sid(),
+			Ssid:      ssid,
 			GatewayId: gateway.gatewayId,
 		},
 	}, c.done, gateway.SigninTimeout())
 	if nil != err {
 		return err
 	}
-	if 0 != reply.GetGuildId() {
-		gateway.Subscrib(channelTypeGuild, reply.GetGuildId(), uid)
-	}
+	gateway.bindUser(uid, ssid, reply.GetGuildId())
+	c.uid = uid
+	c.guildId = reply.GetGuildId()
 	return nil
 }
