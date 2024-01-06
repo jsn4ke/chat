@@ -5,9 +5,17 @@ package api
 
 import (
 	"time"
+
+	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
+
+func NewRpcAuthCli(cli *jsn_rpc.Client) rpcinter.RpcAuthCli {
+	c := new(rpcAuthCli)
+	c.cli = cli
+	return c
+}
 
 type (
 	rpcAuthCli struct {

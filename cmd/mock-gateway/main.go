@@ -7,10 +7,13 @@ import (
 	_ "net/http/pprof"
 	"time"
 
+	"github.com/jsn4ke/chat/internal/api"
 	"github.com/jsn4ke/chat/internal/gateway"
+	"github.com/jsn4ke/chat/internal/rpc"
 	"github.com/jsn4ke/chat/pkg/inter"
 	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
+	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
 
 var (
@@ -19,17 +22,12 @@ var (
 )
 
 type mockAuthCluster struct {
-}
-
-// RpcAuthCheckAsk implements rpcinter.RpcAuthCli.
-func (*mockAuthCluster) RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk, cancel <-chan struct{}, timeout time.Duration) error {
-	fmt.Println("RpcAuthCheckAsk")
-	return nil
+	cli rpcinter.RpcAuthCli
 }
 
 // Get implements inter.RpcAuthCliCluster.
 func (m *mockAuthCluster) Get() rpcinter.RpcAuthCli {
-	return m
+	return m.cli
 }
 
 type mockLogicCluster struct {
@@ -67,9 +65,23 @@ var (
 func main() {
 	flag.Parse()
 	go http.ListenAndServe("127.0.0.1:6666", nil)
-	err := gateway.NewGateway(1, *addr, make(<-chan struct{}), new(mockAuthCluster), new(mockLogicCluster))
+	go newRpcAuthServer()
+
+	err := gateway.NewGateway(1, *addr, make(<-chan struct{}), newRpcAuthCliCluster(), new(mockLogicCluster))
 	if nil != err {
 		panic(err)
 	}
 	select {}
+}
+
+func newRpcAuthServer() {
+	svr := jsn_rpc.NewServer("127.0.0.1:10001", 128, 4)
+	rpc.NewRpcAuthServer(svr, 4, make(<-chan struct{})).Run()
+}
+
+func newRpcAuthCliCluster() *mockAuthCluster {
+	c := new(mockAuthCluster)
+	cli := jsn_rpc.NewClient("127.0.0.1:10001", 8, 4)
+	c.cli = api.NewRpcAuthCli(cli)
+	return c
 }

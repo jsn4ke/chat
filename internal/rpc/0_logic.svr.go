@@ -4,41 +4,73 @@
 package rpc
 
 import (
+	"sync"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
+	"github.com/jsn4ke/jsn_net"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
+	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
 )
 
-// type rpcLogicServer struct  {
-// svr *jsn_rpc.Server
-// in  chan *jsn_rpc.AsyncRpc
-// }
-func (s *rpcLogicServer) RegisterRpc() {
-	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSigninRequest), s.SyncRpc)
-	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSubscribeOrUnsubscribAsk), s.SyncRpc)
-	s.svr.RegisterExecutor(new(message_rpc.RpcLogicReSubscribeAsk), s.SyncRpc)
+type rpcLogicCore struct {
+	svr    *jsn_rpc.Server
+	in     chan *jsn_rpc.AsyncRpc
+	done   <-chan struct{}
+	wg     sync.WaitGroup
+	runNum int
+	core   rpcinter.RpcLogicSvr
 }
-func (s *rpcLogicServer) SyncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {
+
+func (s *rpcLogicCore) Run() {
+	s.registerRpc()
+	s.svr.Start()
+	for i := 0; i < s.runNum; i++ {
+		jsn_net.WaitGo(&s.wg, s.run)
+	}
+	s.wg.Wait()
+}
+func (s *rpcLogicCore) registerRpc() {
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSigninRequest), s.syncRpc)
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSubscribeOrUnsubscribAsk), s.syncRpc)
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicReSubscribeAsk), s.syncRpc)
+}
+func (s *rpcLogicCore) syncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {
 	wrap := jsn_rpc.AsyncRpcPool.Get()
+	wrap.In = in
 	wrap.Error = make(chan error, 1)
 	s.in <- wrap
 	err := <-wrap.Error
 	return wrap.Reply, err
 }
-func (s *rpcLogicServer) handleIn(wrap *jsn_rpc.AsyncRpc) {
+func (s *rpcLogicCore) run() {
+	for {
+		select {
+		case <-s.done:
+			select {
+			case in := <-s.in:
+				in.Error <- RpcDownError
+			default:
+				return
+			}
+		case in := <-s.in:
+			s.handleIn(in)
+		}
+	}
+}
+func (s *rpcLogicCore) handleIn(wrap *jsn_rpc.AsyncRpc) {
 	var err error
 	defer func() {
 		wrap.Error <- err
 	}()
 	switch in := wrap.In.(type) {
 	case *message_rpc.RpcLogicSigninRequest:
-		// func(s *rpcLogicServer)RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest)(*message_rpc.RpcLogicSigninResponse, error)
-		wrap.Reply, err = s.RpcLogicSigninRequest(in)
+		// func(s *rpcLogicSvr)RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest)(*message_rpc.RpcLogicSigninResponse, error)
+		wrap.Reply, err = s.core.RpcLogicSigninRequest(in)
 	case *message_rpc.RpcLogicSubscribeOrUnsubscribAsk:
-		// func(s *rpcLogicServer)RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk) error
-		err = s.RpcLogicSubscribeOrUnsubscribAsk(in)
+		// func(s *rpcLogicSvr)RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk) error
+		err = s.core.RpcLogicSubscribeOrUnsubscribAsk(in)
 	case *message_rpc.RpcLogicReSubscribeAsk:
-		// func(s *rpcLogicServer)RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk) error
-		err = s.RpcLogicReSubscribeAsk(in)
+		// func(s *rpcLogicSvr)RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk) error
+		err = s.core.RpcLogicReSubscribeAsk(in)
 	default:
 		err = InvalidRpcInputError
 	}

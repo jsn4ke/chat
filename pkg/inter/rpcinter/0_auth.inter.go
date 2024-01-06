@@ -11,3 +11,7 @@ import (
 type RpcAuthCli interface {
 	RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk, cancel <-chan struct{}, timeout time.Duration) error
 }
+type RpcAuthSvr interface {
+	Run()
+	RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk) error
+}

@@ -5,9 +5,17 @@ package api
 
 import (
 	"time"
+
+	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
+
+func NewRpcLogicCli(cli *jsn_rpc.Client) rpcinter.RpcLogicCli {
+	c := new(rpcLogicCli)
+	c.cli = cli
+	return c
+}
 
 type (
 	rpcLogicCli struct {

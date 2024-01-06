@@ -17,8 +17,10 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 		// rpc message 匹配前缀
 		prefix string
 		// 类名
-		className string
-		goName    string
+		coreName  string
+		interName string
+
+		svrName string
 	}
 
 	svrArr := map[string]*svrs{}
@@ -30,11 +32,11 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 		}
 
 		prefix := name[:len(name)-len(`Unit`)]
-		name = prefix + "Server"
 		cli := &svrs{
-			goName:    name,
 			prefix:    prefix,
-			className: strings.ToLower(name[:1]) + name[1:],
+			coreName:  strings.ToLower(prefix[:1]) + prefix[1:] + "Core",
+			interName: "rpcinter." + prefix + "Svr",
+			svrName:   strings.ToLower(prefix[:1]) + prefix[1:] + "Svr",
 		}
 		svrArr[prefix] = cli
 	}
@@ -54,17 +56,35 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 	g.P(`package `, sps[len(sps)-1])
 
 	g.P(`import (`)
+	g.P(`"sync"`)
 	g.P(`"github.com/jsn4ke/chat/pkg/pb/message_rpc"`)
+	g.P(`"github.com/jsn4ke/jsn_net"`)
 	g.P(`jsn_rpc "github.com/jsn4ke/jsn_net/rpc"`)
+	g.P(`"github.com/jsn4ke/chat/pkg/inter/rpcinter"`)
 	g.P(`)`)
 
 	for _, svr := range svrArr {
 		svr := svr
-		g.P(fmt.Sprintf("//type %v struct  {", svr.className))
-		g.P(`//svr *jsn_rpc.Server`)
-		g.P(`//in  chan *jsn_rpc.AsyncRpc`)
-		g.P(`//}`)
-		g.P(fmt.Sprintf("func (s *%v) RegisterRpc() {", svr.className))
+		g.P(fmt.Sprintf("type %v struct {", svr.coreName))
+		g.P(`svr    *jsn_rpc.Server
+		in     chan *jsn_rpc.AsyncRpc
+		done   <-chan struct{}
+		wg     sync.WaitGroup
+		runNum int`)
+		g.P(`core `, svr.interName)
+		g.P(`}`)
+
+		// func (s *rpcAuthServer) Run() {
+
+		g.P(fmt.Sprintf(" func (s *%v) Run() {", svr.coreName))
+		g.P(`s.registerRpc()
+		s.svr.Start()`)
+		g.P(`	for i := 0; i < s.runNum; i++ {
+			jsn_net.WaitGo(&s.wg, s.run)
+		}
+		s.wg.Wait()
+		}`)
+		g.P(fmt.Sprintf("func (s *%v) registerRpc() {", svr.coreName))
 		for _, v := range file.Messages {
 			v := v
 			name := v.GoIdent.GoName
@@ -75,19 +95,36 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 				strings.HasSuffix(name, `Ask`) ||
 				strings.HasSuffix(name, `Sync`) {
 				inName := string(file.GoPackageName) + `.` + name
-				g.P(fmt.Sprintf("s.svr.RegisterExecutor(new(%v), s.SyncRpc)",
+				g.P(fmt.Sprintf("s.svr.RegisterExecutor(new(%v), s.syncRpc)",
 					inName))
 			}
 		}
 		g.P(`}`)
 
-		g.P(fmt.Sprintf("func (s *%v) SyncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {", svr.className))
+		g.P(fmt.Sprintf("func (s *%v) syncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {", svr.coreName))
 		g.P(`wrap := jsn_rpc.AsyncRpcPool.Get()`)
+		g.P(`wrap.In = in`)
 		g.P(`wrap.Error = make(chan error, 1)`)
 		g.P(`s.in <- wrap`)
 		g.P(`err := <-wrap.Error`)
 		g.P(`return wrap.Reply, err`)
 		g.P(`}`)
+
+		g.P(fmt.Sprintf("func(s *%v) run() {", svr.coreName))
+		g.P(`	for {
+			select {
+			case <-s.done:
+				select {
+				case in :=<- s.in:
+					in.Error <- RpcDownError
+				default:
+					return
+				}
+			case in := <-s.in:
+				s.handleIn(in)
+			}
+		}
+	}`)
 	}
 
 	for _, svr := range svrArr {
@@ -98,7 +135,7 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 		// 		in.Error <- err
 		// 	}()
 		// }
-		g.P(fmt.Sprintf("func (s *%v) handleIn(wrap *jsn_rpc.AsyncRpc) {", svr.className))
+		g.P(fmt.Sprintf("func (s *%v) handleIn(wrap *jsn_rpc.AsyncRpc) {", svr.coreName))
 		g.P(`var err error`)
 		g.P(`defer func(){`)
 		g.P(`wrap.Error <- err`)
@@ -114,18 +151,18 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 
 			if strings.HasSuffix(name, `Ask`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
-				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v) error", svr.className, name, inName))
-				g.P(fmt.Sprintf("err = s.%v(in)", name))
+				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v) error", svr.svrName, name, inName))
+				g.P(fmt.Sprintf("err = s.core.%v(in)", name))
 			} else if strings.HasSuffix(name, `Sync`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
-				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v)", svr.className, name, inName))
-				g.P(fmt.Sprintf("s.%v(in)", name))
+				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v)", svr.svrName, name, inName))
+				g.P(fmt.Sprintf("s.core.%v(in)", name))
 			} else if strings.HasSuffix(name, `Request`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
 				respName := inName[:len(inName)-len(`Request`)] + "Response"
 				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v)(*%v, error)",
-					svr.className, name, inName, respName))
-				g.P(fmt.Sprintf("wrap.Reply, err = s.%v(in)", name))
+					svr.svrName, name, inName, respName))
+				g.P(fmt.Sprintf("wrap.Reply, err = s.core.%v(in)", name))
 			}
 		}
 		g.P(`default:`)
@@ -201,10 +238,8 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 		// rpc message 匹配前缀
 		prefix string
 		// 接口名字
-		interName string
-		// 类名
-		className string
-		emptyName string
+		cliInterName string
+		svrInterName string
 	}
 	cliArr := map[string]*clis{}
 	for _, v := range file.Messages {
@@ -217,10 +252,9 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 		prefix := name[:len(name)-len(`Unit`)]
 		name = prefix + "Cli"
 		cli := &clis{
-			prefix:    prefix,
-			interName: name,
-			className: strings.ToLower(name[:1]) + name[1:],
-			emptyName: "Empty" + name,
+			prefix:       prefix,
+			cliInterName: name,
+			svrInterName: prefix + "Svr",
 		}
 		cliArr[prefix] = cli
 	}
@@ -245,7 +279,7 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 	g.P(`)`)
 
 	for prefix, cli := range cliArr {
-		g.P(fmt.Sprintf(`type %v interface {`, cli.interName))
+		g.P(fmt.Sprintf(`type %v interface {`, cli.cliInterName))
 		for _, v := range file.Messages {
 			name := v.GoIdent.GoName
 			if !strings.HasPrefix(name, prefix) {
@@ -268,6 +302,31 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 		g.P(`}`)
 	}
 
+	for prefix, cli := range cliArr {
+		g.P(fmt.Sprintf(`type %v interface {`, cli.svrInterName))
+		g.P(`Run()`)
+		for _, v := range file.Messages {
+			name := v.GoIdent.GoName
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			inName := string(file.GoPackageName) + `.` + name
+			if strings.HasSuffix(name, `Ask`) {
+				g.P(fmt.Sprintf("%v (in *%v) error",
+					name, inName))
+			} else if strings.HasSuffix(name, `Sync`) {
+				g.P(fmt.Sprintf("%v (in *%v) {",
+					name, inName))
+			} else if strings.HasSuffix(name, `Request`) {
+				respName := inName
+				respName = respName[:len(respName)-len(`Request`)] + "Response"
+				g.P(fmt.Sprintf("%v (in *%v) (*%v, error)",
+					name, inName, respName))
+			}
+		}
+		g.P(`}`)
+	}
+
 }
 
 func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
@@ -276,6 +335,7 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 		interName string
 		className string
 		emptyName string
+		name      string
 	}
 	cliArr := map[string]*clis{}
 	for _, v := range file.Messages {
@@ -289,9 +349,10 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 		name = prefix + "Cli"
 		cli := &clis{
 			prefix:    prefix,
-			interName: "inter." + name,
+			interName: "rpcinter." + name,
 			className: strings.ToLower(name[:1]) + name[1:],
 			emptyName: "Empty" + name,
+			name:      name,
 		}
 		cliArr[prefix] = cli
 	}
@@ -312,9 +373,19 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 
 	g.P(`import (`)
 	g.P(`"time"`)
+	g.P(``)
+	g.P(`"github.com/jsn4ke/chat/pkg/inter/rpcinter"`)
 	g.P(`"github.com/jsn4ke/chat/pkg/pb/message_rpc"`)
 	g.P(`jsn_rpc "github.com/jsn4ke/jsn_net/rpc"`)
 	g.P(`)`)
+
+	for _, v := range cliArr {
+		g.P(fmt.Sprintf(" func New%v(cli *jsn_rpc.Client) %v {", v.name, v.interName))
+		g.P(fmt.Sprintf("c := new(%v)", v.className))
+		g.P(`c.cli = cli`)
+		g.P(`return c`)
+		g.P(`}`)
+	}
 
 	g.P(`type (`)
 	for _, v := range cliArr {

@@ -4,33 +4,65 @@
 package rpc
 
 import (
+	"sync"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
+	"github.com/jsn4ke/jsn_net"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
+	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
 )
 
-// type rpcAuthServer struct  {
-// svr *jsn_rpc.Server
-// in  chan *jsn_rpc.AsyncRpc
-// }
-func (s *rpcAuthServer) RegisterRpc() {
-	s.svr.RegisterExecutor(new(message_rpc.RpcAuthCheckAsk), s.SyncRpc)
+type rpcAuthCore struct {
+	svr    *jsn_rpc.Server
+	in     chan *jsn_rpc.AsyncRpc
+	done   <-chan struct{}
+	wg     sync.WaitGroup
+	runNum int
+	core   rpcinter.RpcAuthSvr
 }
-func (s *rpcAuthServer) SyncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {
+
+func (s *rpcAuthCore) Run() {
+	s.registerRpc()
+	s.svr.Start()
+	for i := 0; i < s.runNum; i++ {
+		jsn_net.WaitGo(&s.wg, s.run)
+	}
+	s.wg.Wait()
+}
+func (s *rpcAuthCore) registerRpc() {
+	s.svr.RegisterExecutor(new(message_rpc.RpcAuthCheckAsk), s.syncRpc)
+}
+func (s *rpcAuthCore) syncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {
 	wrap := jsn_rpc.AsyncRpcPool.Get()
+	wrap.In = in
 	wrap.Error = make(chan error, 1)
 	s.in <- wrap
 	err := <-wrap.Error
 	return wrap.Reply, err
 }
-func (s *rpcAuthServer) handleIn(wrap *jsn_rpc.AsyncRpc) {
+func (s *rpcAuthCore) run() {
+	for {
+		select {
+		case <-s.done:
+			select {
+			case in := <-s.in:
+				in.Error <- RpcDownError
+			default:
+				return
+			}
+		case in := <-s.in:
+			s.handleIn(in)
+		}
+	}
+}
+func (s *rpcAuthCore) handleIn(wrap *jsn_rpc.AsyncRpc) {
 	var err error
 	defer func() {
 		wrap.Error <- err
 	}()
 	switch in := wrap.In.(type) {
 	case *message_rpc.RpcAuthCheckAsk:
-		// func(s *rpcAuthServer)RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk) error
-		err = s.RpcAuthCheckAsk(in)
+		// func(s *rpcAuthSvr)RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk) error
+		err = s.core.RpcAuthCheckAsk(in)
 	default:
 		err = InvalidRpcInputError
 	}

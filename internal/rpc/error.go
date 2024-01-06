@@ -1,7 +1,11 @@
 package rpc
 
-import "fmt"
+import (
+	"errors"
+)
 
 var (
-	InvalidRpcInputError = fmt.Errorf("invalid rpc input")
+	InvalidRpcInputError = errors.New("invalid rpc input")
+	InvalidTokenError    = errors.New("invlid token")
+	RpcDownError         = errors.New("rpc down")
 )

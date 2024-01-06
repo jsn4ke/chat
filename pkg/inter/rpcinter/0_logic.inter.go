@@ -13,3 +13,9 @@ type RpcLogicCli interface {
 	RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk, cancel <-chan struct{}, timeout time.Duration) error
 	RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk, cancel <-chan struct{}, timeout time.Duration) error
 }
+type RpcLogicSvr interface {
+	Run()
+	RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest) (*message_rpc.RpcLogicSigninResponse, error)
+	RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk) error
+	RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk) error
+}
