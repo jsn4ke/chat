@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	gatewayAddr = "127.0.0.1:10001"
+	gatewayAddr = "127.0.0.1:14001"
 )
 
 var (

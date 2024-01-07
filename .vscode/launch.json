@@ -35,6 +35,17 @@
                 "^TestRpcLogicReSubscribeAsk$",
                 "./internal/rpc",
             ],
-        }
+        },
+        {
+            "name": "Launch chat pusher",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/chat-pusher",
+            "buildFlags": [
+                "-race",
+            ],
+            "args": [],
+        },
     ]
 }

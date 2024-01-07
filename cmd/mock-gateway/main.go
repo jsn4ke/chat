@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -115,6 +116,7 @@ var (
 )
 
 func newRpcLogicServer() {
+	fmt.Println("==", Addr, Password)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     Addr,
 		Password: Password,
@@ -136,6 +138,7 @@ func newRpcAuthServer() {
 }
 
 func newRpcPushServer() {
+	fmt.Println(Addr, Password)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     Addr,
 		Password: Password,
