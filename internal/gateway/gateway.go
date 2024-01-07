@@ -1,25 +1,23 @@
 package gateway
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/jsn4ke/chat/pkg/inter"
+	"github.com/jsn4ke/chat/internal/inter"
 	ltvcodec "github.com/jsn4ke/chat/pkg/ltv-codec"
+	"github.com/jsn4ke/chat/pkg/pb/message_obj"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	"github.com/jsn4ke/jsn_net"
+	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
 
-const (
-	channelTypeNone = iota
-	channelTypeGuild
-	channelTypeMax
-)
-
-func NewGateway(gatewayid uint32, addr string, done <-chan struct{},
+func NewGateway(gatewayid uint32, addr, rpcAddr string, done <-chan struct{},
 	authCluster inter.RpcAuthCliCluster,
 	logicCluster inter.RpcLogicCliCluster,
+	gatewayRpcWrap inter.GateWayWrapFunc,
 ) error {
 	listener, err := net.Listen(`tcp`, addr)
 	if nil != err {
@@ -28,10 +26,12 @@ func NewGateway(gatewayid uint32, addr string, done <-chan struct{},
 
 	g := new(gateway)
 	g.gatewayId = gatewayid
+	g.rpcAddr = rpcAddr
 	g.done = done
 	g.authCluster = authCluster
 	g.logicCluster = logicCluster
-	g.syncDiff = true
+	// 首次同步全部
+	g.syncDiff = false
 
 	g.cliAcceptor = jsn_net.NewTcpAcceptor(listener.(*net.TCPListener), 1, 30000, func() jsn_net.Pipe {
 		c := new(clientHandler)
@@ -42,6 +42,37 @@ func NewGateway(gatewayid uint32, addr string, done <-chan struct{},
 	}, new(ltvcodec.LTVCodec), 0, 64)
 	g.cliAcceptor.Start()
 
+	gatewayRpcSvr := jsn_rpc.NewServer(rpcAddr, 128, 4)
+
+	jsn_net.WaitGo(&g.wg, gatewayRpcWrap(gatewayRpcSvr, 10, done, g).Run)
+
+	// logicCluster.Range(func(rlc rpcinter.RpcLogicCli) {
+	// 	jsn_net.WaitGo(&g.wg, func() {
+	// 		cli := api.NewRpcUnionGatewayCli(rlc.Cli())
+	// 		req := &message_rpc.RpcUnionGatewayUploadGatewayInfoAsk{
+	// 			GatewaId: gatewayid,
+	// 			Address:  rpcAddr,
+	// 		}
+	// 		err := cli.RpcUnionGatewayUploadGatewayInfoAsk(req, done, time.Second)
+	// 		if nil == err {
+	// 			return
+	// 		}
+	// 		tk := time.NewTicker(time.Second)
+	// 		defer tk.Stop()
+	// 		for {
+	// 			select {
+	// 			case <-done:
+	// 				return
+	// 			case <-tk.C:
+	// 				err := cli.RpcUnionGatewayUploadGatewayInfoAsk(req, done, time.Second)
+	// 				if nil == err {
+	// 					return
+	// 				}
+	// 			}
+	// 		}
+	// 	})
+	// })
+
 	jsn_net.WaitGo(&g.wg, g.upload)
 	return nil
 }
@@ -49,16 +80,19 @@ func NewGateway(gatewayid uint32, addr string, done <-chan struct{},
 type gateway struct {
 	gatewayId uint32
 
+	rpcAddr string
+
 	authCluster  inter.RpcAuthCliCluster
 	logicCluster inter.RpcLogicCliCluster
 
 	cliAcceptor *jsn_net.TcpAcceptor
 
 	////////////////
-	mtx         sync.Mutex
-	users       map[uint64]uint64
-	channels    [channelTypeMax]map[uint64]map[uint64]uint64
-	channelSync [channelTypeMax]map[uint64]bool
+	mtx   sync.Mutex
+	users map[uint64]uint64
+	// key - uid - ssid
+	channels    [message_obj.ChannelMessageType_ChannelMessageType_Max]map[uint64]map[uint64]uint64
+	channelSync [message_obj.ChannelMessageType_ChannelMessageType_Max]map[uint64]bool
 	syncDiff    bool
 	///////////////
 
@@ -83,9 +117,13 @@ func (g *gateway) SubscribHeatbeat() time.Duration {
 	return time.Millisecond * 100
 }
 
-func (g *gateway) bindUser(uid uint64, ssid uint64, guildId uint64) {
+func (g *gateway) ChatTimeout() time.Duration {
+	return time.Millisecond * 50
+}
+
+func (g *gateway) bindUser(uid uint64, ssid uint64, guildId uint64, worlId uint64) {
 	g.mtx.Lock()
-	g.mtx.Unlock()
+	defer g.mtx.Unlock()
 	oldSess := g.users[uid]
 	if nil == g.users {
 		g.users = map[uint64]uint64{}
@@ -97,61 +135,72 @@ func (g *gateway) bindUser(uid uint64, ssid uint64, guildId uint64) {
 			sess.Close()
 		}
 	}
-	if 0 != guildId {
-		ct := channelTypeGuild
-		keyMap := g.channels[ct]
-		mp, ok := keyMap[guildId]
-		if !ok {
-			if nil == keyMap {
-				keyMap = map[uint64]map[uint64]uint64{}
-				g.channels[ct] = keyMap
-			}
-			mp = map[uint64]uint64{}
-			keyMap[guildId] = mp
-		}
-		_, replace := mp[uid]
-		mp[uid] = ssid
-		// 0-1 new sub or 1-1
-		if !replace && 1 != len(mp) {
-			return
-		}
-		sm := g.channelSync[ct]
-		if _, ok := sm[guildId]; ok {
-			delete(sm, guildId)
-		} else {
-			if nil == sm {
-				sm = map[uint64]bool{}
-				g.channelSync[ct] = sm
-			}
-			sm[guildId] = true
-		}
-	}
+	g.bindChanel(message_obj.ChannelMessageType_ChannelMessageType_Guild, guildId, uid, ssid)
+	g.bindChanel(message_obj.ChannelMessageType_ChannelMessageType_World, worlId, uid, ssid)
 }
 
-func (g *gateway) unbindUser(uid uint64, ssid uint64, guild uint64) {
+func (g *gateway) unbindUser(uid uint64, ssid uint64, guild uint64, world uint64) {
 	g.mtx.Lock()
-	g.mtx.Unlock()
+	defer g.mtx.Unlock()
 	curssid := g.users[uid]
 	if curssid == ssid {
 		delete(g.users, uid)
 	}
-	if 0 != guild {
-		ch := g.channels[channelTypeGuild]
-		guildSub := ch[guild]
-		curssid = guildSub[uid]
-		if curssid == ssid {
-			delete(guildSub, uid)
-			if 0 == len(guildSub) {
-				cs := g.channelSync[channelTypeGuild]
-				if _, ok := cs[guild]; ok {
-					delete(cs, guild)
-				} else {
-					if nil == cs {
-						cs = map[uint64]bool{}
-						g.channelSync[channelTypeGuild] = cs
-					}
-					cs[guild] = false
+	g.unbindChannel(message_obj.ChannelMessageType_ChannelMessageType_Guild, guild, uid, ssid)
+	g.unbindChannel(message_obj.ChannelMessageType_ChannelMessageType_World, world, uid, ssid)
+}
+
+func (g *gateway) bindChanel(ct message_obj.ChannelMessageType, key uint64, uid uint64, ssid uint64) {
+	if 0 == key {
+		return
+	}
+	sub := g.channels[ct]
+	mp, ok := sub[key]
+	if !ok {
+		if nil == sub {
+			sub = map[uint64]map[uint64]uint64{}
+			g.channels[ct] = sub
+		}
+		mp = map[uint64]uint64{}
+		sub[key] = mp
+	}
+	_, replace := mp[uid]
+	mp[uid] = ssid
+	// 0-1 new sub or 1-1
+	if !replace && 1 != len(mp) {
+		return
+	}
+	sm := g.channelSync[ct]
+	if _, ok := sm[key]; ok {
+		delete(sm, key)
+	} else {
+		if nil == sm {
+			sm = map[uint64]bool{}
+			g.channelSync[ct] = sm
+		}
+		sm[key] = true
+	}
+}
+
+func (g *gateway) unbindChannel(ct message_obj.ChannelMessageType, key uint64, uid uint64, ssid uint64) {
+	if 0 == key {
+		return
+	}
+	ch := g.channels[ct]
+	sub := ch[key]
+	curssid := sub[uid]
+	if curssid == ssid {
+		delete(sub, uid)
+		if 0 == len(sub) {
+			cs := g.channelSync[ct]
+			if _, ok := cs[key]; ok {
+				delete(cs, key)
+			} else {
+				if nil == cs {
+					cs = map[uint64]bool{}
+					g.channelSync[ct] = cs
 				}
+				cs[key] = false
 			}
 		}
 	}
@@ -176,16 +225,27 @@ func (g *gateway) uploadSubOrUnsub() {
 		}
 		g.mtx.Lock()
 		sync := g.channelSync
-		g.channelSync = [channelTypeMax]map[uint64]bool{}
+		g.channelSync = [message_obj.ChannelMessageType_ChannelMessageType_Max]map[uint64]bool{}
 		g.mtx.Unlock()
-		if 0 == len(sync) {
+
+		gen := func(ct message_obj.ChannelMessageType) (add []uint64, rem []uint64) {
+			for k, v := range sync[ct] {
+				if v {
+					add = append(add, k)
+				} else {
+					rem = append(rem, k)
+				}
+			}
 			return
 		}
-		if 0 != len(sync[channelTypeGuild]) {
-			err := g.logicCluster.Get().RpcLogicSubscribeOrUnsubscribAsk(&message_rpc.RpcLogicSubscribeOrUnsubscribAsk{
-				GatewayId: g.gatewayId,
-				Guild:     sync[channelTypeGuild],
-			}, g.done, g.SubscribTimeout())
+		msg := &message_rpc.RpcLogicSubscribeOrUnsubscribAsk{
+			GatewayId: g.gatewayId,
+		}
+		msg.GuildsAdd, msg.GuildsRem = gen(message_obj.ChannelMessageType_ChannelMessageType_Guild)
+		msg.WorldAdd, msg.WorldRem = gen(message_obj.ChannelMessageType_ChannelMessageType_World)
+		if 0 != len(msg.WorldAdd) || 0 != len(msg.WorldRem) ||
+			0 != len(msg.GuildsAdd) || 0 != len(msg.GuildsRem) {
+			err := g.logicCluster.Get().RpcLogicSubscribeOrUnsubscribAsk(msg, g.done, g.SubscribTimeout())
 			if nil != err {
 				g.syncDiff = false
 			}
@@ -200,22 +260,26 @@ func (g *gateway) uploadReSubscrib() {
 		select {
 		case <-tk.C:
 		}
-		var sync [channelTypeMax]map[uint64]bool
-		g.mtx.Lock()
-		g.channelSync = [channelTypeMax]map[uint64]bool{}
-		for ct, v := range g.channels {
-			sync[ct] = map[uint64]bool{}
-			for key := range v {
-				sync[ct][key] = true
-			}
-		}
-		g.mtx.Unlock()
-		err := g.logicCluster.Get().RpcLogicReSubscribeAsk(&message_rpc.RpcLogicReSubscribeAsk{
+		msg := &message_rpc.RpcLogicReSubscribeAsk{
 			GatewayId: g.gatewayId,
-			Guild:     sync[channelTypeGuild],
-		}, g.done, g.SubscribTimeout())
+		}
+		g.mtx.Lock()
+		gen := func(ct message_obj.ChannelMessageType) (ret []uint64) {
+			sub := g.channels[ct]
+			for key := range sub {
+				ret = append(ret, key)
+			}
+			return
+		}
+		msg.Guilds = gen(message_obj.ChannelMessageType_ChannelMessageType_Guild)
+		msg.Worlds = gen(message_obj.ChannelMessageType_ChannelMessageType_World)
+		g.channelSync = [message_obj.ChannelMessageType_ChannelMessageType_Max]map[uint64]bool{}
+		g.mtx.Unlock()
+		err := g.logicCluster.Get().RpcLogicReSubscribeAsk(msg, g.done, g.SubscribTimeout())
 		if nil == err {
 			g.syncDiff = true
+		} else {
+			fmt.Println("uploadReSubscrib", err)
 		}
 	}
 }

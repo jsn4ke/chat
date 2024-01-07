@@ -10,10 +10,10 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/mock-gateway",
-            "args": [
-                "-addr",
-                "127.0.0.1:8888"
+            "buildFlags": [
+                "-race",
             ],
+            "args": [],
         },
         {
             "name": "Launch mock client",
@@ -21,9 +21,19 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/mock-client",
+            "args": [],
+        },
+        {
+            "name": "Launch test",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
             "args": [
-                "-addr",
-                "127.0.0.1:8888"
+                "-test.v",
+                "-test.run",
+                "^TestRpcLogicReSubscribeAsk$",
+                "./internal/rpc",
             ],
         }
     ]

@@ -4,34 +4,58 @@
 package rpc
 
 import (
-	"sync"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
-	"github.com/jsn4ke/jsn_net"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
-	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
+	"github.com/jsn4ke/chat/internal/inter/rpcinter"
 )
 
+/*
+	func NewRpcLogicSvr(svr *jsn_rpc.Server, runNum int, done <-chan struct{}) rpcinter.RpcLogicSvr {
+		s := new(rpcLogicSvr)
+		c := new(rpcCore)
+		c.svr = svr
+		c.in = make(chan *jsn_rpc.AsyncRpc, 128)
+		c.done = done
+		c.runNum = runNum
+
+		s.rpcLogicCore.rpcCore = c
+		s.rpcLogicCore.wrap = s
+		return s
+	}
+
+	type rpcLogicSvr struct {
+		rpcLogicCore
+	}
+
+	func (s *rpcLogicSvr) Run() {
+		s.registerRpc()
+
+		s.svr.Start()
+		for i := 0; i < s.runNum; i++ {
+			jsn_net.WaitGo(&s.wg, s.run)
+		}
+		s.wg.Wait()
+	}
+
+func(s *rpcLogicSvr)RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest)(*message_rpc.RpcLogicSigninResponse, error) {}
+func(s *rpcLogicSvr)RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk) error {}
+func(s *rpcLogicSvr)RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk) error {}
+func(s *rpcLogicSvr)RpcLogicChat2GuildAsk(in *message_rpc.RpcLogicChat2GuildAsk) error {}
+func(s *rpcLogicSvr)RpcLogicChat2WorldAsk(in *message_rpc.RpcLogicChat2WorldAsk) error {}
+func(s *rpcLogicSvr)RpcLogicChat2DirectAsk(in *message_rpc.RpcLogicChat2DirectAsk) error {}
+*/
 type rpcLogicCore struct {
-	svr    *jsn_rpc.Server
-	in     chan *jsn_rpc.AsyncRpc
-	done   <-chan struct{}
-	wg     sync.WaitGroup
-	runNum int
-	core   rpcinter.RpcLogicSvr
+	*rpcCore
+	wrap rpcinter.RpcLogicSvrWrap
 }
 
-func (s *rpcLogicCore) Run() {
-	s.registerRpc()
-	s.svr.Start()
-	for i := 0; i < s.runNum; i++ {
-		jsn_net.WaitGo(&s.wg, s.run)
-	}
-	s.wg.Wait()
-}
 func (s *rpcLogicCore) registerRpc() {
 	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSigninRequest), s.syncRpc)
 	s.svr.RegisterExecutor(new(message_rpc.RpcLogicSubscribeOrUnsubscribAsk), s.syncRpc)
 	s.svr.RegisterExecutor(new(message_rpc.RpcLogicReSubscribeAsk), s.syncRpc)
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicChat2GuildAsk), s.syncRpc)
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicChat2WorldAsk), s.syncRpc)
+	s.svr.RegisterExecutor(new(message_rpc.RpcLogicChat2DirectAsk), s.syncRpc)
 }
 func (s *rpcLogicCore) syncRpc(in jsn_rpc.RpcUnit) (jsn_rpc.RpcUnit, error) {
 	wrap := jsn_rpc.AsyncRpcPool.Get()
@@ -64,13 +88,22 @@ func (s *rpcLogicCore) handleIn(wrap *jsn_rpc.AsyncRpc) {
 	switch in := wrap.In.(type) {
 	case *message_rpc.RpcLogicSigninRequest:
 		// func(s *rpcLogicSvr)RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest)(*message_rpc.RpcLogicSigninResponse, error)
-		wrap.Reply, err = s.core.RpcLogicSigninRequest(in)
+		wrap.Reply, err = s.wrap.RpcLogicSigninRequest(in)
 	case *message_rpc.RpcLogicSubscribeOrUnsubscribAsk:
 		// func(s *rpcLogicSvr)RpcLogicSubscribeOrUnsubscribAsk(in *message_rpc.RpcLogicSubscribeOrUnsubscribAsk) error
-		err = s.core.RpcLogicSubscribeOrUnsubscribAsk(in)
+		err = s.wrap.RpcLogicSubscribeOrUnsubscribAsk(in)
 	case *message_rpc.RpcLogicReSubscribeAsk:
 		// func(s *rpcLogicSvr)RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk) error
-		err = s.core.RpcLogicReSubscribeAsk(in)
+		err = s.wrap.RpcLogicReSubscribeAsk(in)
+	case *message_rpc.RpcLogicChat2GuildAsk:
+		// func(s *rpcLogicSvr)RpcLogicChat2GuildAsk(in *message_rpc.RpcLogicChat2GuildAsk) error
+		err = s.wrap.RpcLogicChat2GuildAsk(in)
+	case *message_rpc.RpcLogicChat2WorldAsk:
+		// func(s *rpcLogicSvr)RpcLogicChat2WorldAsk(in *message_rpc.RpcLogicChat2WorldAsk) error
+		err = s.wrap.RpcLogicChat2WorldAsk(in)
+	case *message_rpc.RpcLogicChat2DirectAsk:
+		// func(s *rpcLogicSvr)RpcLogicChat2DirectAsk(in *message_rpc.RpcLogicChat2DirectAsk) error
+		err = s.wrap.RpcLogicChat2DirectAsk(in)
 	default:
 		err = InvalidRpcInputError
 	}

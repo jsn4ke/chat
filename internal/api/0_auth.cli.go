@@ -6,7 +6,7 @@ package api
 import (
 	"time"
 
-	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
+	"github.com/jsn4ke/chat/internal/inter/rpcinter"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
@@ -24,6 +24,12 @@ type (
 	EmptyRpcAuthCli struct{}
 )
 
+func (c *rpcAuthCli) Cli() *jsn_rpc.Client {
+	return c.cli
+}
+func (c *EmptyRpcAuthCli) Cli() *jsn_rpc.Client {
+	return nil
+}
 func (c *rpcAuthCli) RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk, cancel <-chan struct{}, timeout time.Duration) error {
 	return c.cli.Ask(in, cancel, timeout)
 }

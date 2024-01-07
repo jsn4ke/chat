@@ -1,0 +1,51 @@
+syntax="proto3";
+
+package message_cli;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_cli";
+
+import "message_obj/common.proto";
+
+enum CliCmd {
+    CliCmd_None = 0;
+    CliCmd_ResponseCliSucces = 1;
+    CliCmd_ResponseCliFailure = 2;
+    CliCmd_RequestSignIn = 3;
+    CliCmd_RequestChat2Guild = 101;
+    CliCmd_ResponseChatInfo = 102;
+    CliCmd_RequestChat2World = 103;
+    CliCmd_RequestChat2Direct = 104;
+}
+
+message ResponseCliSucces {
+    uint32 inCmdId = 1;
+}
+
+message ResponseCliFailure {
+    // 服务器主动推的则cmd为0
+    uint32 inCmdId = 1;
+    string errorString = 2;
+    bool kick = 3;
+}
+
+message RequestSignIn {
+    uint64 uid = 1;
+    bytes token = 2;
+}
+
+message RequestChat2Guild {
+    string text = 1;
+}
+
+message RequestChat2World {
+    string text = 1;
+}
+
+message RequestChat2Direct {
+    uint64 receiveId = 1;
+    string text = 2;
+}
+
+message ResponseChatInfo {
+    repeated message_obj.ChannelMessage cms = 1;
+}

@@ -1,0 +1,23 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_rpc";
+
+message RpcPusherUnit {}
+
+message RpcPusherChat2GuildSync {
+    uint64 guildId = 1;
+    bytes body = 2;
+}
+
+message RpcPusherChat2WorldSync {
+    uint64 worldId = 1;
+    bytes body = 2;
+}
+
+message RpcPusherChat2DirectSync {
+    uint64 uid = 1;
+    uint64 receiveId = 2;
+    bytes body = 3;
+}

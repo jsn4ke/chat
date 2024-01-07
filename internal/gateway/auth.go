@@ -13,12 +13,22 @@ import (
 var (
 	_ jsn_net.Pipe = (*clientHandler)(nil)
 
-	handlers = map[uint32]func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) error{}
+	// return error, kickuser==true
+	handlers = map[uint32]func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) (error, bool){}
 )
 
 func init() {
-	handlers[uint32(message_cli.CliCmd_CliCmd_RequestSignIn)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) error {
+	handlers[uint32(message_cli.CliCmd_CliCmd_RequestSignIn)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) (error, bool) {
 		return auth(c, session, in.(*message_cli.RequestSignIn))
+	}
+	handlers[uint32(message_cli.CliCmd_CliCmd_RequestChat2Guild)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) (error, bool) {
+		return chat2Guild(c, session, in.(*message_cli.RequestChat2Guild))
+	}
+	handlers[uint32(message_cli.CliCmd_CliCmd_RequestChat2World)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) (error, bool) {
+		return chat2World(c, session, in.(*message_cli.RequestChat2World))
+	}
+	handlers[uint32(message_cli.CliCmd_CliCmd_RequestChat2Direct)] = func(c *clientHandler, session *jsn_net.TcpSession, in message_cli.CliMessage) (error, bool) {
+		return chat2Direct(c, session, in.(*message_cli.RequestChat2Direct))
 	}
 }
 
@@ -31,10 +41,9 @@ type clientHandler struct {
 
 	gateway *gateway
 
-	authed bool
-
 	uid     uint64
 	guildId uint64
+	world   uint64
 }
 
 // Close implements jsn_net.Pipe.
@@ -75,27 +84,34 @@ func (c *clientHandler) handlerIn(in any) {
 		c.session = tp.S
 		c.session.SetReadTimeoutOnce(time.Second)
 	case *jsn_net.TcpEventClose:
-		if 0 == c.uid {
+		// fmt.Println(tp.S.Sid(), "close", tp.ManualClose, tp.Err)
+		uid := c.uid
+		if 0 == uid {
 			return
 		}
-		c.gateway.unbindUser(c.uid, c.session.Sid(), c.guildId)
+		c.uid = 0
+		c.gateway.unbindUser(uid, c.session.Sid(), c.guildId, c.world)
 	case *jsn_net.TcpEventPacket:
+		c.session.CancelLastTimeout()
 		var (
 			body  []byte
 			err   error
 			cmdId uint32
+			kick  bool
 		)
 		packet := tp.Packet.(*ltvcodec.LTVReadPacket)
 		h, ok := handlers[packet.CmdId]
 		if !ok {
 			err = fmt.Errorf("%v in coming no handler", packet.CmdId)
 		} else {
-			err = h(c, tp.S, packet.Body)
+			err, kick = h(c, tp.S, packet.Body)
 		}
-		if nil != err {
+		outErr := err
+		if nil != outErr {
 			resp := &message_cli.ResponseCliFailure{
 				InCmdId:     packet.CmdId,
-				ErrorString: err.Error(),
+				ErrorString: outErr.Error(),
+				Kick:        kick,
 			}
 			body, err = resp.Marshal()
 			if nil != err {
@@ -117,42 +133,122 @@ func (c *clientHandler) handlerIn(in any) {
 			CmdId: cmdId,
 			Body:  body,
 		})
+
 		for _, v := range c.inflight {
 			v := v
 			c.session.Send(v)
+		}
+		if kick {
+			c.session.Close()
 		}
 	case *jsn_net.TcpEventOutSide:
 	}
 }
 
-func auth(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestSignIn) error {
+func auth(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestSignIn) (error, bool) {
 	var (
 		uid     uint64 = in.GetUid()
 		token   []byte = in.GetToken()
 		gateway        = c.gateway
 		ssid           = session.Sid()
 	)
-	if c.authed {
-		return fmt.Errorf("session authed")
+	if 0 != c.uid {
+		return fmt.Errorf("session authed"), true
 	}
 	err := gateway.authCluster.Get().RpcAuthCheckAsk(&message_rpc.RpcAuthCheckAsk{
 		Uid:   uid,
 		Token: token,
 	}, c.done, gateway.AuthRpcTimeout())
 	if nil != err {
-		return err
+		return err, true
 	}
 	reply, err := gateway.logicCluster.Get().RpcLogicSigninRequest(&message_rpc.RpcLogicSigninRequest{
+		Uid: uid,
 		ClientId: &message_rpc.ClientId{
 			Ssid:      ssid,
 			GatewayId: gateway.gatewayId,
 		},
 	}, c.done, gateway.SigninTimeout())
 	if nil != err {
-		return err
+		return err, true
 	}
-	gateway.bindUser(uid, ssid, reply.GetGuildId())
+	gateway.bindUser(uid, ssid, reply.GetGuildId(), reply.GetWorldId())
 	c.uid = uid
 	c.guildId = reply.GetGuildId()
-	return nil
+	c.world = reply.GetWorldId()
+	return nil, false
+}
+
+func chat2Guild(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestChat2Guild) (error, bool) {
+	if 0 == c.uid {
+		return fmt.Errorf("session unauthed"), true
+	}
+	var (
+		text    = in.GetText()
+		gateway = c.gateway
+	)
+	if 0 == len(text) {
+		return fmt.Errorf("chat2Guild no text"), false
+	}
+	if 0 == c.guildId {
+		return fmt.Errorf("not in guild"), false
+	}
+	err := gateway.logicCluster.Get().RpcLogicChat2GuildAsk(&message_rpc.RpcLogicChat2GuildAsk{
+		Uid:  c.uid,
+		Text: text,
+	}, c.done, gateway.ChatTimeout())
+	if nil != err {
+		return err, false
+	}
+	return nil, false
+}
+
+func chat2World(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestChat2World) (error, bool) {
+	if 0 == c.uid {
+		return fmt.Errorf("session unauthed"), true
+	}
+	var (
+		text    = in.GetText()
+		gateway = c.gateway
+	)
+	if 0 == len(text) {
+		return fmt.Errorf("chat2Guild no text"), false
+	}
+	if 0 == c.world {
+		return fmt.Errorf("not in guild"), false
+	}
+	err := gateway.logicCluster.Get().RpcLogicChat2WorldAsk(&message_rpc.RpcLogicChat2WorldAsk{
+		Uid:  c.uid,
+		Text: text,
+	}, c.done, gateway.ChatTimeout())
+	if nil != err {
+		return err, false
+	}
+	return nil, false
+}
+
+func chat2Direct(c *clientHandler, session *jsn_net.TcpSession, in *message_cli.RequestChat2Direct) (error, bool) {
+	if 0 == c.uid {
+		return fmt.Errorf("session unauthed"), true
+	}
+	var (
+		rid     = in.GetReceiveId()
+		text    = in.GetText()
+		gateway = c.gateway
+	)
+	if 0 == len(text) {
+		return fmt.Errorf("chat2Guild no text"), false
+	}
+	if 0 == rid {
+		return fmt.Errorf("not in guild"), false
+	}
+	err := gateway.logicCluster.Get().RpcLogicChat2DirectAsk(&message_rpc.RpcLogicChat2DirectAsk{
+		Uid:       c.uid,
+		ReceiveId: rid,
+		Text:      text,
+	}, c.done, gateway.ChatTimeout())
+	if nil != err {
+		return err, false
+	}
+	return nil, false
 }

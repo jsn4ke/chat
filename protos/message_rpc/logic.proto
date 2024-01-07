@@ -1,0 +1,49 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_rpc";
+
+import "message_rpc/common.proto";
+
+message RpcLogicUnit{}
+
+message RpcLogicSigninRequest {
+    uint64 uid = 1;
+    ClientId clientId = 2;
+}
+
+message RpcLogicSigninResponse {
+    uint64 guildId = 1;
+    uint64 worldId = 2;
+}
+
+message RpcLogicSubscribeOrUnsubscribAsk {
+    uint32 gatewayId = 1;
+    repeated uint64 guildsAdd = 2;
+    repeated uint64 guildsRem = 3;
+    repeated uint64 worldAdd = 4;
+    repeated uint64 worldRem = 5;
+}
+
+message RpcLogicReSubscribeAsk {
+    uint32 gatewayId = 1;
+    repeated uint64 guilds = 2;
+    repeated uint64 worlds = 3;
+}
+
+message RpcLogicChat2GuildAsk {
+    uint64 uid = 1;
+    string text = 2;
+}
+
+message RpcLogicChat2WorldAsk {
+    uint64 uid = 1;
+    string text = 2;
+}
+
+message RpcLogicChat2DirectAsk {
+    uint64 uid = 1;
+    uint64 receiveId = 2;
+    string text = 3;
+}

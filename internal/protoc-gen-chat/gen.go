@@ -17,8 +17,9 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 		// rpc message 匹配前缀
 		prefix string
 		// 类名
-		coreName  string
-		interName string
+		coreName     string
+		interName    string
+		upperSvrName string
 
 		svrName string
 	}
@@ -30,13 +31,16 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 			!strings.HasSuffix(name, `Unit`) {
 			continue
 		}
-
+		if strings.Contains(v.Comments.Leading.String(), "dont generate") {
+			continue
+		}
 		prefix := name[:len(name)-len(`Unit`)]
 		cli := &svrs{
-			prefix:    prefix,
-			coreName:  strings.ToLower(prefix[:1]) + prefix[1:] + "Core",
-			interName: "rpcinter." + prefix + "Svr",
-			svrName:   strings.ToLower(prefix[:1]) + prefix[1:] + "Svr",
+			prefix:       prefix,
+			coreName:     strings.ToLower(prefix[:1]) + prefix[1:] + "Core",
+			interName:    "rpcinter." + prefix + "Svr",
+			svrName:      strings.ToLower(prefix[:1]) + prefix[1:] + "Svr",
+			upperSvrName: prefix + "Svr",
 		}
 		svrArr[prefix] = cli
 	}
@@ -56,34 +60,78 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 	g.P(`package `, sps[len(sps)-1])
 
 	g.P(`import (`)
-	g.P(`"sync"`)
 	g.P(`"github.com/jsn4ke/chat/pkg/pb/message_rpc"`)
-	g.P(`"github.com/jsn4ke/jsn_net"`)
 	g.P(`jsn_rpc "github.com/jsn4ke/jsn_net/rpc"`)
-	g.P(`"github.com/jsn4ke/chat/pkg/inter/rpcinter"`)
+	g.P(`"github.com/jsn4ke/chat/internal/inter/rpcinter"`)
 	g.P(`)`)
+
+	comment := `/* 
+	func New%v(svr *jsn_rpc.Server, runNum int, done <-chan struct{}) rpcinter.%v {
+		s := new(%v)
+		c := new(rpcCore)
+		c.svr = svr
+		c.in = make(chan *jsn_rpc.AsyncRpc, 128)
+		c.done = done
+		c.runNum = runNum
+	
+		s.%v.rpcCore = c
+		s.%v.wrap = s
+		return s
+	}
+	
+	type %v struct {
+		%v
+	}
+	
+	func (s *%v) Run() {
+		s.registerRpc()
+	
+		s.svr.Start()
+		for i := 0; i < s.runNum; i++ {
+			jsn_net.WaitGo(&s.wg, s.run)
+		}
+		s.wg.Wait()
+	}
+	`
+
+	for _, svr := range svrArr {
+		g.P(fmt.Sprintf(comment,
+			svr.upperSvrName, svr.upperSvrName,
+			svr.svrName,
+			svr.coreName,
+			svr.coreName,
+			svr.svrName,
+			svr.coreName,
+			svr.svrName))
+
+		for _, v := range file.Messages {
+			v := v
+			name := v.GoIdent.GoName
+			if !strings.HasPrefix(name, svr.prefix) {
+				continue
+			}
+			inName := string(file.GoPackageName) + `.` + name
+
+			if strings.HasSuffix(name, `Ask`) {
+				g.P(fmt.Sprintf("func(s *%v)%v(in *%v) error {}", svr.svrName, name, inName))
+			} else if strings.HasSuffix(name, `Sync`) {
+				g.P(fmt.Sprintf("func(s *%v)%v(in *%v) {}", svr.svrName, name, inName))
+			} else if strings.HasSuffix(name, `Request`) {
+				respName := inName[:len(inName)-len(`Request`)] + "Response"
+				g.P(fmt.Sprintf("func(s *%v)%v(in *%v)(*%v, error) {}",
+					svr.svrName, name, inName, respName))
+			}
+		}
+		g.P(`*/`)
+	}
 
 	for _, svr := range svrArr {
 		svr := svr
 		g.P(fmt.Sprintf("type %v struct {", svr.coreName))
-		g.P(`svr    *jsn_rpc.Server
-		in     chan *jsn_rpc.AsyncRpc
-		done   <-chan struct{}
-		wg     sync.WaitGroup
-		runNum int`)
-		g.P(`core `, svr.interName)
+		g.P(`*rpcCore`)
+		g.P(`wrap `, svr.interName, "Wrap")
 		g.P(`}`)
 
-		// func (s *rpcAuthServer) Run() {
-
-		g.P(fmt.Sprintf(" func (s *%v) Run() {", svr.coreName))
-		g.P(`s.registerRpc()
-		s.svr.Start()`)
-		g.P(`	for i := 0; i < s.runNum; i++ {
-			jsn_net.WaitGo(&s.wg, s.run)
-		}
-		s.wg.Wait()
-		}`)
 		g.P(fmt.Sprintf("func (s *%v) registerRpc() {", svr.coreName))
 		for _, v := range file.Messages {
 			v := v
@@ -152,17 +200,17 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 			if strings.HasSuffix(name, `Ask`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
 				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v) error", svr.svrName, name, inName))
-				g.P(fmt.Sprintf("err = s.core.%v(in)", name))
+				g.P(fmt.Sprintf("err = s.wrap.%v(in)", name))
 			} else if strings.HasSuffix(name, `Sync`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
 				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v)", svr.svrName, name, inName))
-				g.P(fmt.Sprintf("s.core.%v(in)", name))
+				g.P(fmt.Sprintf("s.wrap.%v(in)", name))
 			} else if strings.HasSuffix(name, `Request`) {
 				g.P(fmt.Sprintf("case *%v:", inName))
 				respName := inName[:len(inName)-len(`Request`)] + "Response"
 				g.P(fmt.Sprintf("//func(s *%v)%v(in *%v)(*%v, error)",
 					svr.svrName, name, inName, respName))
-				g.P(fmt.Sprintf("wrap.Reply, err = s.core.%v(in)", name))
+				g.P(fmt.Sprintf("wrap.Reply, err = s.wrap.%v(in)", name))
 			}
 		}
 		g.P(`default:`)
@@ -173,7 +221,7 @@ func GenRpcSrv(gen *protogen.Plugin, file *protogen.File, dir string) {
 
 }
 
-func GenCli(gen *protogen.Plugin, file *protogen.File) {
+func GenCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 	var cliArr []*protogen.Message
 
 	for _, v := range file.Messages {
@@ -187,7 +235,9 @@ func GenCli(gen *protogen.Plugin, file *protogen.File) {
 		return
 	}
 
-	filename := file.GeneratedFilenamePrefix + ".ext.go"
+	sps := strings.Split(file.GeneratedFilenamePrefix, `/`)
+	filename := "0_" + sps[len(sps)-1] + ".ext.go"
+	filename = path.Join(dir, sps[len(sps)-2], filename)
 	g := gen.NewGeneratedFile(filename, file.GoImportPath)
 
 	g.P(`// Code generated by protoc-gen-chat. DO NOT EDIT.`)
@@ -261,6 +311,24 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 	if 0 == len(cliArr) {
 		return
 	}
+	hasTime := false
+
+	for prefix := range cliArr {
+		for _, v := range file.Messages {
+			name := v.GoIdent.GoName
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			if strings.HasSuffix(name, `Ask`) {
+				hasTime = true
+				break
+			} else if strings.HasSuffix(name, `Sync`) {
+			} else if strings.HasSuffix(name, `Request`) {
+				hasTime = true
+				break
+			}
+		}
+	}
 	sps := strings.Split(file.GeneratedFilenamePrefix, `/`)
 
 	filename := "0_" + sps[len(sps)-1] + ".inter.go"
@@ -274,12 +342,16 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 	g.P(`package `, sps[len(sps)-1])
 
 	g.P(`import (`)
-	g.P(`"time"`)
+	if hasTime {
+		g.P(`"time"`)
+	}
 	g.P(`"github.com/jsn4ke/chat/pkg/pb/message_rpc"`)
+	g.P(`jsn_rpc "github.com/jsn4ke/jsn_net/rpc"`)
 	g.P(`)`)
 
 	for prefix, cli := range cliArr {
 		g.P(fmt.Sprintf(`type %v interface {`, cli.cliInterName))
+		g.P(`Cli() *jsn_rpc.Client`)
 		for _, v := range file.Messages {
 			name := v.GoIdent.GoName
 			if !strings.HasPrefix(name, prefix) {
@@ -290,7 +362,7 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 				g.P(fmt.Sprintf("%v (in *%v, cancel <-chan struct{}, timeout time.Duration) error",
 					name, inName))
 			} else if strings.HasSuffix(name, `Sync`) {
-				g.P(fmt.Sprintf("%v (in *%v) {",
+				g.P(fmt.Sprintf("%v (in *%v)",
 					name, inName))
 			} else if strings.HasSuffix(name, `Request`) {
 				respName := inName
@@ -303,8 +375,7 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 	}
 
 	for prefix, cli := range cliArr {
-		g.P(fmt.Sprintf(`type %v interface {`, cli.svrInterName))
-		g.P(`Run()`)
+		g.P(fmt.Sprintf(`type %vWrap interface {`, cli.svrInterName))
 		for _, v := range file.Messages {
 			name := v.GoIdent.GoName
 			if !strings.HasPrefix(name, prefix) {
@@ -315,7 +386,7 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 				g.P(fmt.Sprintf("%v (in *%v) error",
 					name, inName))
 			} else if strings.HasSuffix(name, `Sync`) {
-				g.P(fmt.Sprintf("%v (in *%v) {",
+				g.P(fmt.Sprintf("%v (in *%v)",
 					name, inName))
 			} else if strings.HasSuffix(name, `Request`) {
 				respName := inName
@@ -324,6 +395,10 @@ func GenRpcInter(gen *protogen.Plugin, file *protogen.File, dir string) {
 					name, inName, respName))
 			}
 		}
+		g.P(`}`)
+		g.P(fmt.Sprintf(`type %v interface {`, cli.svrInterName))
+		g.P(`Run()`)
+		g.P(cli.svrInterName, "Wrap")
 		g.P(`}`)
 	}
 
@@ -359,6 +434,24 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 	if 0 == len(cliArr) {
 		return
 	}
+	hasTime := false
+
+	for prefix := range cliArr {
+		for _, v := range file.Messages {
+			name := v.GoIdent.GoName
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			if strings.HasSuffix(name, `Ask`) {
+				hasTime = true
+				break
+			} else if strings.HasSuffix(name, `Sync`) {
+			} else if strings.HasSuffix(name, `Request`) {
+				hasTime = true
+				break
+			}
+		}
+	}
 	sps := strings.Split(file.GeneratedFilenamePrefix, `/`)
 
 	filename := "0_" + sps[len(sps)-1] + ".cli.go"
@@ -372,9 +465,11 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 	g.P(`package `, sps[len(sps)-1])
 
 	g.P(`import (`)
-	g.P(`"time"`)
+	if hasTime {
+		g.P(`"time"`)
+	}
 	g.P(``)
-	g.P(`"github.com/jsn4ke/chat/pkg/inter/rpcinter"`)
+	g.P(`"github.com/jsn4ke/chat/internal/inter/rpcinter"`)
 	g.P(`"github.com/jsn4ke/chat/pkg/pb/message_rpc"`)
 	g.P(`jsn_rpc "github.com/jsn4ke/jsn_net/rpc"`)
 	g.P(`)`)
@@ -395,7 +490,17 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 		g.P(fmt.Sprintf("%v struct{}", v.emptyName))
 	}
 	g.P(`)`)
+
+	for _, v := range cliArr {
+		g.P(fmt.Sprintf(" func (c *%v) Cli() *jsn_rpc.Client { ", v.className))
+		g.P(`	return c.cli
+		}`)
+		g.P(fmt.Sprintf(" func (c *%v) Cli() *jsn_rpc.Client { ", v.emptyName))
+		g.P(`	return nil
+		}`)
+	}
 	for prefix, cli := range cliArr {
+
 		for _, v := range file.Messages {
 			name := v.GoIdent.GoName
 			if !strings.HasPrefix(name, prefix) {
@@ -415,7 +520,7 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 			} else if strings.HasSuffix(name, `Sync`) {
 				g.P(fmt.Sprintf("func (c *%v) %v (in *%v) {",
 					cli.className, name, inName))
-				g.P(`cli.Sync(in, cancel, timeout)`)
+				g.P(`c.cli.Sync(in)`)
 				g.P(`}`)
 
 				g.P(fmt.Sprintf("func (c *%v) %v (in *%v) {",
@@ -441,7 +546,7 @@ func GenRpcCli(gen *protogen.Plugin, file *protogen.File, dir string) {
 
 }
 
-func GenRpcExt(gen *protogen.Plugin, file *protogen.File) {
+func GenRpcExt(gen *protogen.Plugin, file *protogen.File, dir string) {
 
 	fixMessage := func(s string) bool {
 		if strings.HasSuffix(s, `Request`) {
@@ -469,7 +574,11 @@ func GenRpcExt(gen *protogen.Plugin, file *protogen.File) {
 	if !in {
 		return
 	}
-	filename := file.GeneratedFilenamePrefix + ".ext.go"
+	// filename := file.GeneratedFilenamePrefix + ".ext.go"
+	// g := gen.NewGeneratedFile(filename, file.GoImportPath)
+	sps := strings.Split(file.GeneratedFilenamePrefix, `/`)
+	filename := "0_" + sps[len(sps)-1] + ".ext.go"
+	filename = path.Join(dir, sps[len(sps)-2], filename)
 	g := gen.NewGeneratedFile(filename, file.GoImportPath)
 
 	g.P(`// Code generated by protoc-gen-chat. DO NOT EDIT.`)

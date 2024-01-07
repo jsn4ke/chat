@@ -10,10 +10,10 @@ import (
 func main() {
 	var (
 		flags    flag.FlagSet
-		rpcext   = flags.Bool("rpcext", false, "")
+		rpcext   = flags.String("rpcext", "", "")
 		rpccli   = flags.String("rpccli", "", "")
 		rpcinter = flags.String("rpcinter", "", "")
-		cli      = flags.Bool("cli", false, "")
+		cli      = flags.String("cli", "", "")
 		rpcsvr   = flags.String("rpcsvr", "", "")
 	)
 	protogen.Options{
@@ -24,8 +24,8 @@ func main() {
 			if !v.Generate {
 				continue
 			}
-			if *rpcext {
-				protoc_gen_chat.GenRpcExt(p, v)
+			if 0 != len(*rpcext) {
+				protoc_gen_chat.GenRpcExt(p, v, *rpcext)
 			}
 			if 0 != len(*rpccli) {
 				protoc_gen_chat.GenRpcCli(p, v, *rpccli)
@@ -33,8 +33,8 @@ func main() {
 			if 0 != len(*rpcinter) {
 				protoc_gen_chat.GenRpcInter(p, v, *rpcinter)
 			}
-			if *cli {
-				protoc_gen_chat.GenCli(p, v)
+			if 0 != len(*cli) {
+				protoc_gen_chat.GenCli(p, v, *cli)
 			}
 			if 0 != len(*rpcsvr) {
 				protoc_gen_chat.GenRpcSrv(p, v, *rpcsvr)

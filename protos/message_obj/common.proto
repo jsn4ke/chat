@@ -1,0 +1,38 @@
+syntax="proto3";
+
+package message_obj;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_obj";
+
+message GulidChatInfo {
+    uint64 uid = 1;
+    uint64 guild = 2;
+    int64 createdTimestamp = 3;
+    string text = 4;
+}
+
+message WorldChatInfo {
+    uint64 uid = 1;
+    int64 createdTimestamp = 2;
+    string text = 3;
+}
+
+message DirectChatInfo {
+    uint64 uid = 1;
+    uint64 receiveId = 2;
+    int64 createdTimestamp = 3;
+    string text = 4;
+}
+
+enum ChannelMessageType {
+    ChannelMessageType_Drirect = 0;
+    ChannelMessageType_Guild = 1;
+    ChannelMessageType_World = 2;
+    ChannelMessageType_Max = 3;
+} 
+
+message ChannelMessage {
+    ChannelMessageType ct = 1;
+    uint64 channelId = 2;
+    bytes body = 3;
+}

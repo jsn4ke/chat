@@ -4,30 +4,46 @@
 package rpc
 
 import (
-	"sync"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
-	"github.com/jsn4ke/jsn_net"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
-	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
+	"github.com/jsn4ke/chat/internal/inter/rpcinter"
 )
 
+/*
+	func NewRpcAuthSvr(svr *jsn_rpc.Server, runNum int, done <-chan struct{}) rpcinter.RpcAuthSvr {
+		s := new(rpcAuthSvr)
+		c := new(rpcCore)
+		c.svr = svr
+		c.in = make(chan *jsn_rpc.AsyncRpc, 128)
+		c.done = done
+		c.runNum = runNum
+
+		s.rpcAuthCore.rpcCore = c
+		s.rpcAuthCore.wrap = s
+		return s
+	}
+
+	type rpcAuthSvr struct {
+		rpcAuthCore
+	}
+
+	func (s *rpcAuthSvr) Run() {
+		s.registerRpc()
+
+		s.svr.Start()
+		for i := 0; i < s.runNum; i++ {
+			jsn_net.WaitGo(&s.wg, s.run)
+		}
+		s.wg.Wait()
+	}
+
+func(s *rpcAuthSvr)RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk) error {}
+*/
 type rpcAuthCore struct {
-	svr    *jsn_rpc.Server
-	in     chan *jsn_rpc.AsyncRpc
-	done   <-chan struct{}
-	wg     sync.WaitGroup
-	runNum int
-	core   rpcinter.RpcAuthSvr
+	*rpcCore
+	wrap rpcinter.RpcAuthSvrWrap
 }
 
-func (s *rpcAuthCore) Run() {
-	s.registerRpc()
-	s.svr.Start()
-	for i := 0; i < s.runNum; i++ {
-		jsn_net.WaitGo(&s.wg, s.run)
-	}
-	s.wg.Wait()
-}
 func (s *rpcAuthCore) registerRpc() {
 	s.svr.RegisterExecutor(new(message_rpc.RpcAuthCheckAsk), s.syncRpc)
 }
@@ -62,7 +78,7 @@ func (s *rpcAuthCore) handleIn(wrap *jsn_rpc.AsyncRpc) {
 	switch in := wrap.In.(type) {
 	case *message_rpc.RpcAuthCheckAsk:
 		// func(s *rpcAuthSvr)RpcAuthCheckAsk(in *message_rpc.RpcAuthCheckAsk) error
-		err = s.core.RpcAuthCheckAsk(in)
+		err = s.wrap.RpcAuthCheckAsk(in)
 	default:
 		err = InvalidRpcInputError
 	}

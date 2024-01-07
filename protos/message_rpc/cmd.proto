@@ -1,0 +1,29 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_rpc";
+
+enum RpcCmd {
+    RpcCmd_None = 0;
+    RpcCmd_RpcAuthCheckAsk = 10001;
+
+    RpcCmd_RpcLogicSigninRequest = 20001;
+    RpcCmd_RpcLogicSigninResponse = 20002;
+    RpcCmd_RpcLogicSubscribeOrUnsubscribAsk = 20003;
+    RpcCmd_RpcLogicReSubscribeAsk = 20004;
+    RpcCmd_RpcLogicChat2GuildAsk = 20005;
+    RpcCmd_RpcLogicChat2WorldAsk = 20006;
+    RpcCmd_RpcLogicChat2DirectAsk = 20007;
+
+    RpcCmd_RpcGatewayKickUserSync = 30001;
+    RpcCmd_RpcGatewayChannelPushSync = 30002;
+    RpcCmd_RpcGatewayInfoRequest = 30003;
+    RpcCmd_RpcGatewayInfoResponse = 30004;
+
+    RpcCmd_RpcUnionGatewayUploadGatewayInfoAsk = 40001;
+
+    RpcCmd_RpcPusherChat2GuildSync = 50001;
+    RpcCmd_RpcPusherChat2WorldSync = 50002;
+    RpcCmd_RpcPusherChat2DirectSync = 50003;
+}

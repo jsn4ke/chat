@@ -1,0 +1,32 @@
+syntax="proto3";
+
+package message_rpc;
+
+option go_package="github.com/jsn4ke/chat/pkg/pb/message_rpc";
+
+import "message_obj/common.proto";
+import "message_rpc/common.proto";
+
+message RpcGatewayUnit {}
+
+message RpcGatewayKickUserSync {
+    uint64 uid = 1;
+    ClientId clientId = 2;
+}
+
+message RpcGatewayInfoRequest {}
+message RpcGatewayInfoResponse {
+    uint32 gatewayId = 1;
+}
+
+
+message RpcGatewayChannelPushSync {
+    repeated message_obj.ChannelMessage cm = 1;
+}
+
+message RpcUnionGatewayUnit {}
+
+message RpcUnionGatewayUploadGatewayInfoAsk {
+    uint32 gatewaId = 1;
+    string address = 2;
+}

@@ -4,5 +4,8 @@
             "--proto_path=${workspaceRoot}/protos",
         ]
     },
-    "files.autoSave": "onFocusChange"
+    "files.autoSave": "onFocusChange",
+    "go.testFlags": [
+        "-test.v"
+    ],
 }

@@ -6,7 +6,7 @@ package api
 import (
 	"time"
 
-	"github.com/jsn4ke/chat/pkg/inter/rpcinter"
+	"github.com/jsn4ke/chat/internal/inter/rpcinter"
 	"github.com/jsn4ke/chat/pkg/pb/message_rpc"
 	jsn_rpc "github.com/jsn4ke/jsn_net/rpc"
 )
@@ -24,6 +24,12 @@ type (
 	EmptyRpcLogicCli struct{}
 )
 
+func (c *rpcLogicCli) Cli() *jsn_rpc.Client {
+	return c.cli
+}
+func (c *EmptyRpcLogicCli) Cli() *jsn_rpc.Client {
+	return nil
+}
 func (c *rpcLogicCli) RpcLogicSigninRequest(in *message_rpc.RpcLogicSigninRequest, cancel <-chan struct{}, timeout time.Duration) (*message_rpc.RpcLogicSigninResponse, error) {
 	reply := new(message_rpc.RpcLogicSigninResponse)
 	err := c.cli.Call(in, reply, cancel, timeout)
@@ -42,5 +48,23 @@ func (c *rpcLogicCli) RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribe
 	return c.cli.Ask(in, cancel, timeout)
 }
 func (c *EmptyRpcLogicCli) RpcLogicReSubscribeAsk(in *message_rpc.RpcLogicReSubscribeAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return EmptyRpcCliError
+}
+func (c *rpcLogicCli) RpcLogicChat2GuildAsk(in *message_rpc.RpcLogicChat2GuildAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return c.cli.Ask(in, cancel, timeout)
+}
+func (c *EmptyRpcLogicCli) RpcLogicChat2GuildAsk(in *message_rpc.RpcLogicChat2GuildAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return EmptyRpcCliError
+}
+func (c *rpcLogicCli) RpcLogicChat2WorldAsk(in *message_rpc.RpcLogicChat2WorldAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return c.cli.Ask(in, cancel, timeout)
+}
+func (c *EmptyRpcLogicCli) RpcLogicChat2WorldAsk(in *message_rpc.RpcLogicChat2WorldAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return EmptyRpcCliError
+}
+func (c *rpcLogicCli) RpcLogicChat2DirectAsk(in *message_rpc.RpcLogicChat2DirectAsk, cancel <-chan struct{}, timeout time.Duration) error {
+	return c.cli.Ask(in, cancel, timeout)
+}
+func (c *EmptyRpcLogicCli) RpcLogicChat2DirectAsk(in *message_rpc.RpcLogicChat2DirectAsk, cancel <-chan struct{}, timeout time.Duration) error {
 	return EmptyRpcCliError
 }
