@@ -143,6 +143,7 @@ func (c *RpcPusherCliCluster) goCli(addr string, done <-chan struct{}) {
 	for !cli.Ready() {
 		select {
 		case <-done:
+			cli.Close()
 			return
 		case <-tk.C:
 		}
@@ -250,6 +251,7 @@ func (c *RpcAuthCliCluster) goCli(addr string, done <-chan struct{}) {
 	for !cli.Ready() {
 		select {
 		case <-done:
+			cli.Close()
 			return
 		case <-tk.C:
 		}
@@ -347,6 +349,7 @@ func (c *RpcLogicCliCluster) goCli(addr string, done <-chan struct{}) {
 	for !cli.Ready() {
 		select {
 		case <-done:
+			cli.Close()
 			return
 		case <-tk.C:
 		}
@@ -451,14 +454,15 @@ func (c *RpcGatewayCliCluster) Watch(add, rem []string) {
 
 func (c *RpcGatewayCliCluster) goCli(addr string, gatewaId int, done <-chan struct{}) {
 	cli := jsn_rpc.NewClient(addr, 128, 4)
-	// tk := time.NewTicker(time.Millisecond * 100)
-	// for !cli.Ready() {
-	// 	select {
-	// 	case <-done:
-	// 		return
-	// 	case <-tk.C:
-	// 	}
-	// }
+	tk := time.NewTicker(time.Millisecond * 100)
+	for !cli.Ready() {
+		select {
+		case <-done:
+			cli.Close()
+			return
+		case <-tk.C:
+		}
+	}
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 	if _, ok := c.waiting[addr]; !ok {
