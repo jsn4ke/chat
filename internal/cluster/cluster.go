@@ -35,6 +35,7 @@ func Watch(rdb *redis.Client, key string, modify func(add, rem []string)) {
 			res, err := rdb.SMembers(ctx, key).Result()
 			if nil != err && redis.Nil != err {
 				fmt.Println("watch", err)
+				continue
 			}
 			var (
 				add, rem []string
